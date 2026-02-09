@@ -1,25 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Activity,
   Battery,
+  Bluetooth,
   BluetoothOff,
   ChevronDown,
-  CircleDot,
   Download,
   Gauge,
-  LineChart,
+  LineChart as LineChartIcon,
   Play,
   Radio,
   Signal,
   Square,
   Timer
 } from "lucide-react";
-import {
-  ForceSample,
-  ProfileConfig,
-  SessionSummary,
-  TrainingMode,
-  Units
-} from "./utils/types";
+import { useForceStream, ConnectionMode } from "./hooks/useForceStream";
+import { SessionSample, SessionSummary, TrainingMode, Units } from "./utils/types";
 import {
   addProfile,
   addSession,
@@ -42,7 +38,7 @@ const modeDetails: Record<TrainingMode, { title: string; description: string }> 
   },
   pyramid: {
     title: "Pyramid",
-    description: "Ascending/descending intensity"
+    description: "Ascending + descending intensity"
   },
   free: {
     title: "Free Train",
@@ -54,6 +50,12 @@ const unitsLabel: Record<Units, string> = {
   kg: "kg",
   N: "N",
   lbf: "lbf"
+};
+
+const connectionCopy: Record<ConnectionMode, string> = {
+  wifi: "Connect via Wi-Fi to your GripForge device",
+  bluetooth: "Connect via Bluetooth (Web Bluetooth)",
+  demo: "Running with simulated data"
 };
 
 const formatDuration = (ms: number) => {
@@ -94,13 +96,6 @@ const buildCsv = (sessions: SessionSummary[]) => {
   return [header.join(","), ...rows].join("\n");
 };
 
-const createId = () => {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `session-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-};
-
 const downloadCsv = (sessions: SessionSummary[], profileName: string) => {
   const blob = new Blob([buildCsv(sessions)], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
@@ -111,16 +106,142 @@ const downloadCsv = (sessions: SessionSummary[], profileName: string) => {
   URL.revokeObjectURL(url);
 };
 
-const generateDemoForce = (timeMs: number) => {
-  const base = 18 + 8 * Math.sin(timeMs / 1200);
-  const peak = 40 + 15 * Math.sin(timeMs / 600);
-  const noise = 2 * Math.sin(timeMs / 180) + Math.random() * 1.5;
-  return Math.max(0, base + peak * 0.5 + noise);
+const createId = () => {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `session-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 };
 
-const getWsUrl = () => {
-  const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-  return `${protocol}://${window.location.host}/ws`;
+const convertForce = (value: number, from: Units, to: Units) => {
+  if (from === to) {
+    return value;
+  }
+  const asKg =
+    from === "kg"
+      ? value
+      : from === "lbf"
+        ? value / 2.20462
+        : value / 9.80665;
+  if (to === "kg") {
+    return asKg;
+  }
+  if (to === "lbf") {
+    return asKg * 2.20462;
+  }
+  return asKg * 9.80665;
+};
+
+const clamp = (value: number, min: number, max: number) =>
+  Math.min(Math.max(value, min), max);
+
+const useAnimatedNumber = (value: number, duration = 280) => {
+  const [animated, setAnimated] = useState(value);
+  const rafRef = useRef<number | null>(null);
+  const startRef = useRef(0);
+  const fromRef = useRef(value);
+
+  useEffect(() => {
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+    }
+    fromRef.current = animated;
+    startRef.current = performance.now();
+
+    const step = (now: number) => {
+      const progress = clamp((now - startRef.current) / duration, 0, 1);
+      const next = fromRef.current + (value - fromRef.current) * progress;
+      setAnimated(next);
+      if (progress < 1) {
+        rafRef.current = requestAnimationFrame(step);
+      }
+    };
+
+    rafRef.current = requestAnimationFrame(step);
+    return () => {
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+      }
+    };
+  }, [value, duration]);
+
+  return animated;
+};
+
+const GaugeArc = ({ value, max }: { value: number; max: number }) => {
+  const clamped = clamp(value, 0, max);
+  const percentage = clamped / max;
+  const radius = 80;
+  const circumference = Math.PI * radius;
+  const dash = circumference * percentage;
+
+  return (
+    <svg viewBox="0 0 200 120" className="h-32 w-full">
+      <defs>
+        <linearGradient id="gaugeGradient" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#14b8a6" />
+          <stop offset="50%" stopColor="#6366f1" />
+          <stop offset="100%" stopColor="#a855f7" />
+        </linearGradient>
+      </defs>
+      <path
+        d="M 20 100 A 80 80 0 0 1 180 100"
+        fill="none"
+        stroke="#e2e8f0"
+        strokeWidth="16"
+        strokeLinecap="round"
+      />
+      <path
+        d="M 20 100 A 80 80 0 0 1 180 100"
+        fill="none"
+        stroke="url(#gaugeGradient)"
+        strokeWidth="16"
+        strokeLinecap="round"
+        strokeDasharray={`${dash} ${circumference}`}
+        className="transition-all duration-500"
+      />
+    </svg>
+  );
+};
+
+const ForceChart = ({ data }: { data: number[] }) => {
+  if (data.length === 0) {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-slate-400">
+        No data yet
+      </div>
+    );
+  }
+
+  const max = Math.max(...data);
+  const min = Math.min(...data);
+  const range = max - min || 1;
+  const points = data
+    .map((value, index) => {
+      const x = (index / (data.length - 1 || 1)) * 100;
+      const y = 100 - ((value - min) / range) * 100;
+      return `${x},${y}`;
+    })
+    .join(" ");
+
+  return (
+    <svg viewBox="0 0 100 100" className="h-full w-full">
+      <defs>
+        <linearGradient id="lineGradient" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#22d3ee" />
+          <stop offset="100%" stopColor="#a855f7" />
+        </linearGradient>
+      </defs>
+      <polyline
+        points={points}
+        fill="none"
+        stroke="url(#lineGradient)"
+        strokeWidth="3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
 };
 
 const App = () => {
@@ -133,499 +254,435 @@ const App = () => {
   const [activeProfileName, setActiveProfileName] = useState(() =>
     loadActiveProfileName()
   );
+  const [connectionMode, setConnectionMode] = useState<ConnectionMode>("wifi");
   const [showAllSessions, setShowAllSessions] = useState(false);
-  const [demoMode, setDemoMode] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState<
-    "Connected" | "Not connected"
-  >("Not connected");
-  const [forceData, setForceData] = useState<ForceSample>({
-    force: 0,
-    units: "kg",
-    timestamp_ms: Date.now()
-  });
-  const [batteryVoltage, setBatteryVoltage] = useState<number | null>(null);
-  const [isConnected, setIsConnected] = useState(false);
   const [activeMode, setActiveMode] = useState<TrainingMode>("max");
   const [sessionActive, setSessionActive] = useState(false);
   const [sessionHand, setSessionHand] = useState<"Right" | "Left">("Right");
-  const [sessionMetrics, setSessionMetrics] = useState({
-    maxForce: 0,
-    avgForce: 0,
-    longestHoldMs: 0,
-    durationMs: 0
-  });
-  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [connectionNote, setConnectionNote] = useState<string | null>(null);
 
-  const sessionSamplesRef = useRef<ForceSample[]>([]);
-  const sumRef = useRef(0);
-  const maxRef = useRef(0);
-  const holdStartRef = useRef<number | null>(null);
-  const longestHoldRef = useRef(0);
+  const sessionSamplesRef = useRef<SessionSample[]>([]);
+  const [sessionSamples, setSessionSamples] = useState<SessionSample[]>([]);
+  const sessionStartRef = useRef<number | null>(null);
 
-  const activeProfileData = profiles.find(
-    (entry) => entry.profile.name === activeProfileName
+  const activeProfile = useMemo(
+    () =>
+      profiles.find((entry) => entry.profile.name === activeProfileName) ||
+      profiles[0],
+    [activeProfileName, profiles]
   );
-  const activeProfile = activeProfileData?.profile;
-  const sessions = activeProfileData?.sessions ?? [];
+
+  const { status, error, sample, batteryVoltage, connect, disconnect, startSession, stopSession } =
+    useForceStream({
+      mode: connectionMode,
+      onFallbackMode: (mode, reason) => {
+        setConnectionMode(mode);
+        setConnectionNote(reason);
+      }
+    });
+
+  const preferredUnits = activeProfile.profile.preferredUnits;
+  const convertedForce = useMemo(
+    () => convertForce(sample.force, sample.units, preferredUnits),
+    [sample.force, sample.units, preferredUnits]
+  );
+  const animatedForce = useAnimatedNumber(convertedForce);
+
+  useEffect(() => {
+    if (!sessionActive) {
+      return;
+    }
+    const now = Date.now();
+    const sessionStart = sessionStartRef.current ?? now;
+    sessionStartRef.current = sessionStart;
+    const nextSample = {
+      t_ms: now - sessionStart,
+      force: convertedForce,
+      units: preferredUnits
+    };
+    sessionSamplesRef.current = [...sessionSamplesRef.current, nextSample].slice(
+      -800
+    );
+    setSessionSamples(sessionSamplesRef.current);
+  }, [convertedForce, preferredUnits, sessionActive]);
 
   useEffect(() => {
     saveProfiles(profiles);
   }, [profiles]);
 
-  useEffect(() => {
-    saveActiveProfileName(activeProfileName);
-  }, [activeProfileName]);
-
-  useEffect(() => {
-    if (!activeProfile) {
-      const fallback = profiles[0]?.profile.name;
-      if (fallback) {
-        setActiveProfileName(fallback);
-      }
-    }
-  }, [activeProfile, profiles]);
-
-  useEffect(() => {
-    let ws: WebSocket | null = null;
-    let pollingId: number | null = null;
-    let demoId: number | null = null;
-    let cancelled = false;
-
-    const updateForce = (data: ForceSample & { battery_v?: number }) => {
-      if (cancelled) {
-        return;
-      }
-      setForceData({
-        force: data.force,
-        units: data.units,
-        timestamp_ms: data.timestamp_ms
-      });
-      if (typeof data.battery_v === "number") {
-        setBatteryVoltage(data.battery_v);
-      }
-      setIsConnected(true);
-      setConnectionStatus("Connected");
-      setConnectionError(null);
-    };
-
-    const fetchForce = async () => {
-      try {
-        const response = await fetch("/api/force", { cache: "no-store" });
-        if (!response.ok) {
-          throw new Error("Unable to reach device");
-        }
-        const data = (await response.json()) as ForceSample & {
-          battery_v?: number;
-        };
-        updateForce(data);
-      } catch (error) {
-        setIsConnected(false);
-        setConnectionStatus("Not connected");
-        setConnectionError("Unable to reach device");
-        if (!demoMode) {
-          setDemoMode(true);
-        }
-      }
-    };
-
-    const startPolling = () => {
-      if (pollingId) {
-        return;
-      }
-      pollingId = window.setInterval(fetchForce, 150);
-      fetchForce();
-    };
-
-    if (demoMode) {
-      demoId = window.setInterval(() => {
-        const now = Date.now();
-        updateForce({
-          force: generateDemoForce(now),
-          units: activeProfile?.preferredUnits ?? "kg",
-          timestamp_ms: now
-        });
-      }, 150);
-    } else {
-      try {
-        ws = new WebSocket(getWsUrl());
-        let wsOpened = false;
-        ws.onopen = () => {
-          wsOpened = true;
-          setIsConnected(true);
-          setConnectionStatus("Connected");
-          setConnectionError(null);
-        };
-        ws.onmessage = (event) => {
-          const parsed = JSON.parse(event.data) as ForceSample;
-          updateForce(parsed);
-        };
-        ws.onerror = () => {
-          if (!wsOpened) {
-            startPolling();
-          }
-        };
-        ws.onclose = () => {
-          if (!wsOpened) {
-            startPolling();
-          }
-        };
-        window.setTimeout(() => {
-          if (!wsOpened) {
-            startPolling();
-          }
-        }, 1200);
-      } catch (error) {
-        startPolling();
-      }
-    }
-
-    return () => {
-      cancelled = true;
-      if (ws) {
-        ws.close();
-      }
-      if (pollingId) {
-        window.clearInterval(pollingId);
-      }
-      if (demoId) {
-        window.clearInterval(demoId);
-      }
-    };
-  }, [demoMode, activeProfile?.preferredUnits]);
-
-  useEffect(() => {
-    if (!sessionActive) {
-      return;
-    }
-    const sample: ForceSample = {
-      force: forceData.force,
-      units: forceData.units,
-      timestamp_ms: forceData.timestamp_ms
-    };
-    sessionSamplesRef.current = [...sessionSamplesRef.current, sample];
-    sumRef.current += sample.force;
-    maxRef.current = Math.max(maxRef.current, sample.force);
-
-    if (activeMode === "endurance") {
-      const target = activeProfile?.endurance.targetForce ?? 0;
-      if (sample.force >= target) {
-        if (holdStartRef.current === null) {
-          holdStartRef.current = sample.timestamp_ms;
-        }
-      } else if (holdStartRef.current !== null) {
-        const holdMs = sample.timestamp_ms - holdStartRef.current;
-        longestHoldRef.current = Math.max(longestHoldRef.current, holdMs);
-        holdStartRef.current = null;
-      }
-    }
-
-    const durationMs =
-      sessionSamplesRef.current.length > 1
-        ? sample.timestamp_ms -
-          sessionSamplesRef.current[0].timestamp_ms
-        : 0;
-    const avgForce = sumRef.current / sessionSamplesRef.current.length;
-
-    setSessionMetrics({
-      maxForce: maxRef.current,
-      avgForce,
-      longestHoldMs: longestHoldRef.current,
-      durationMs
-    });
-  }, [forceData, sessionActive, activeMode, activeProfile?.endurance.targetForce]);
+  const profileSessions = activeProfile?.sessions ?? [];
+  const recentSessions = profileSessions.slice(0, 4);
 
   const stats = useMemo(() => {
-    const allSessions = sessions;
-    const baseMax = Math.max(0, ...allSessions.map((s) => s.maxForce));
-    const baseAvg =
-      allSessions.length === 0
-        ? 0
-        : allSessions.reduce((acc, s) => acc + s.avgForce, 0) /
-          allSessions.length;
-    const baseLongest = Math.max(0, ...allSessions.map((s) => s.longestHoldMs));
-    const sessionCount = allSessions.length;
-
-    if (!sessionActive) {
-      return {
-        maxGrip: baseMax,
-        avgForce: baseAvg,
-        longestHoldMs: baseLongest,
-        sessions: sessionCount
-      };
-    }
-
+    const maxGrip = Math.max(...profileSessions.map((s) => s.maxForce), 0);
+    const avgForce =
+      profileSessions.reduce((sum, session) => sum + session.avgForce, 0) /
+      (profileSessions.length || 1);
+    const longestHold = Math.max(
+      ...profileSessions.map((s) => s.longestHoldMs),
+      0
+    );
     return {
-      maxGrip: Math.max(baseMax, sessionMetrics.maxForce),
-      avgForce:
-        sessionCount === 0
-          ? sessionMetrics.avgForce
-          : (baseAvg * sessionCount + sessionMetrics.avgForce) /
-            (sessionCount + 1),
-      longestHoldMs: Math.max(baseLongest, sessionMetrics.longestHoldMs),
-      sessions: sessionCount
+      maxGrip,
+      avgForce,
+      longestHold,
+      sessions: profileSessions.length
     };
-  }, [sessions, sessionActive, sessionMetrics]);
+  }, [profileSessions]);
 
-  const handleConnect = async () => {
-    try {
-      const response = await fetch("/api/force", { cache: "no-store" });
-      if (!response.ok) {
-        throw new Error("Device not reachable");
-      }
-      const data = (await response.json()) as ForceSample & {
-        battery_v?: number;
-      };
-      setForceData(data);
-      setConnectionStatus("Connected");
-      setIsConnected(true);
-      setConnectionError(null);
-    } catch (error) {
-      setConnectionError("Unable to reach device");
-      setConnectionStatus("Not connected");
-      setIsConnected(false);
-      setDemoMode(true);
-    }
-  };
+  const gaugeMax = preferredUnits === "kg" ? 100 : preferredUnits === "lbf" ? 220 : 980;
 
-  const startSession = async () => {
-    if (sessionActive) {
-      return;
-    }
+  const connectionLabel =
+    status === "connected"
+      ? "Connected"
+      : status === "connecting"
+        ? "Connecting"
+        : "Disconnected";
+
+  const connectionColor =
+    status === "connected"
+      ? "bg-emerald-100 text-emerald-700"
+      : status === "connecting"
+        ? "bg-amber-100 text-amber-700"
+        : "bg-slate-100 text-slate-500";
+
+  const startSessionHandler = async () => {
     sessionSamplesRef.current = [];
-    sumRef.current = 0;
-    maxRef.current = 0;
-    holdStartRef.current = null;
-    longestHoldRef.current = 0;
-    setSessionMetrics({ maxForce: 0, avgForce: 0, longestHoldMs: 0, durationMs: 0 });
+    setSessionSamples([]);
+    sessionStartRef.current = Date.now();
     setSessionActive(true);
-    try {
-      await fetch("/api/session/start", { method: "POST" });
-    } catch {
-      // optional endpoint
-    }
+    await startSession();
   };
 
-  const stopSession = async () => {
-    if (!sessionActive) {
-      return;
-    }
+  const stopSessionHandler = async () => {
     setSessionActive(false);
-    try {
-      await fetch("/api/session/stop", { method: "POST" });
-    } catch {
-      // optional endpoint
-    }
-
+    await stopSession();
     const samples = sessionSamplesRef.current;
     if (samples.length === 0) {
       return;
     }
-
-    const durationMs = samples[samples.length - 1].timestamp_ms - samples[0].timestamp_ms;
-    const avgForce = sumRef.current / samples.length;
-    const maxForce = maxRef.current;
-
-    let longestHoldMs = longestHoldRef.current;
-    if (activeMode === "endurance" && holdStartRef.current !== null) {
-      longestHoldMs = Math.max(
-        longestHoldMs,
-        samples[samples.length - 1].timestamp_ms - holdStartRef.current
-      );
-      holdStartRef.current = null;
+    const maxForce = Math.max(...samples.map((s) => s.force));
+    const avgForce =
+      samples.reduce((sum, s) => sum + s.force, 0) / samples.length;
+    const durationMs = samples[samples.length - 1].t_ms;
+    const target = activeProfile.profile.endurance.targetForce;
+    let longestHoldMs = 0;
+    let currentHold = 0;
+    for (let i = 1; i < samples.length; i += 1) {
+      const delta = samples[i].t_ms - samples[i - 1].t_ms;
+      if (samples[i].force >= target) {
+        currentHold += delta;
+        longestHoldMs = Math.max(longestHoldMs, currentHold);
+      } else {
+        currentHold = 0;
+      }
     }
-
-    const session: SessionSummary = {
+    const summary: SessionSummary = {
       id: createId(),
       mode: activeMode,
       hand: sessionHand,
-      startedAt: samples[0].timestamp_ms,
+      startedAt: Date.now() - durationMs,
       durationMs,
       maxForce,
       avgForce,
       longestHoldMs,
-      units: samples[0].units
+      units: preferredUnits
     };
-
-    const updated = addSession(profiles, activeProfileName, session);
-    setProfiles(updated);
+    setProfiles((current) =>
+      addSession(current, activeProfile.profile.name, summary)
+    );
   };
 
-  const updateProfileConfig = (updates: Partial<ProfileConfig>) => {
-    if (!activeProfile) {
-      return;
-    }
-    const updatedProfile: ProfileConfig = { ...activeProfile, ...updates };
-    const updatedProfiles = updateProfile(profiles, updatedProfile);
-    setProfiles(updatedProfiles);
+  const handleProfileChange = (name: string) => {
+    setActiveProfileName(name);
+    saveActiveProfileName(name);
   };
 
-  const handleAddProfile = (name: string) => {
-    if (!name.trim()) {
-      return;
-    }
-    const newProfile: ProfileConfig = {
-      name: name.trim(),
-      endurance: { targetForce: 32 },
-      pyramid: { steps: [18, 28, 38, 28, 18] },
-      preferredUnits: "kg"
+  const handleUnitChange = (units: Units) => {
+    const updated = { ...activeProfile.profile, preferredUnits: units };
+    setProfiles((current) => updateProfile(current, updated));
+  };
+
+  const handleTargetChange = (value: number) => {
+    const updated = {
+      ...activeProfile.profile,
+      endurance: { targetForce: value }
     };
-    const updated = addProfile(profiles, newProfile);
-    setProfiles(updated);
-    setActiveProfileName(newProfile.name);
+    setProfiles((current) => updateProfile(current, updated));
   };
 
-  const chartPoints = sessions
-    .slice()
-    .reverse()
-    .map((session, index) => ({
-      x: index,
-      y: session.maxForce
-    }));
-
-  const maxChartValue = Math.max(1, ...chartPoints.map((p) => p.y));
-  const chartPath = chartPoints
-    .map((point, index) => {
-      const x = (index / Math.max(1, chartPoints.length - 1)) * 240 + 10;
-      const y = 140 - (point.y / maxChartValue) * 110;
-      return `${index === 0 ? "M" : "L"} ${x} ${y}`;
-    })
-    .join(" ");
-
-  const recentSessions = sessions.slice(0, 4);
+  const handlePyramidChange = (value: string) => {
+    const steps = value
+      .split(",")
+      .map((step) => Number.parseFloat(step.trim()))
+      .filter((step) => !Number.isNaN(step));
+    const updated = {
+      ...activeProfile.profile,
+      pyramid: { steps }
+    };
+    setProfiles((current) => updateProfile(current, updated));
+  };
 
   return (
-    <div className="min-h-screen bg-slate-50 px-4 pb-16 pt-6 sm:px-8">
-      <header className="mx-auto flex w-full max-w-6xl items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-soft">
-            <Gauge className="h-6 w-6" />
-          </div>
-          <div>
-            <p className="text-sm uppercase tracking-[0.2em] text-slate-400">
-              GripForge
-            </p>
-            <h1 className="text-2xl font-semibold text-slate-900">
-              Smart Grip Dashboard
-            </h1>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          {demoMode && (
-            <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-700">
-              Demo Mode
-            </span>
-          )}
-          <div className="flex items-center gap-2 rounded-full bg-white px-3 py-2 shadow-soft">
-            <CircleDot className="h-4 w-4 text-emerald-500" />
-            <span className="text-sm text-slate-600">{connectionStatus}</span>
-          </div>
-          <div className="flex items-center gap-2 rounded-full bg-white px-3 py-2 shadow-soft">
-            <select
-              className="text-sm font-medium text-slate-700 focus:outline-none"
-              value={activeProfileName}
-              onChange={(event) => setActiveProfileName(event.target.value)}
-            >
-              {profiles.map((entry) => (
-                <option key={entry.profile.name} value={entry.profile.name}>
-                  {entry.profile.name}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="h-4 w-4 text-slate-400" />
-          </div>
-          <ProfileCreator onCreate={handleAddProfile} />
-        </div>
-      </header>
-
-      {connectionError && !demoMode && (
-        <div className="mx-auto mt-6 w-full max-w-6xl rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-          {connectionError}. Demo Mode enabled for offline testing.
-        </div>
-      )}
-
-      <main className="mx-auto mt-8 flex w-full max-w-6xl flex-col gap-8">
-        <section className="grid gap-6 lg:grid-cols-[2fr_1fr]">
-          <div className="rounded-3xl bg-white p-6 shadow-soft sm:p-8">
-            <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-indigo-50 to-slate-100 text-slate-900">
+      <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6">
+        <header className="rounded-3xl bg-gradient-to-r from-slate-900 via-indigo-900 to-slate-900 px-6 py-6 text-white shadow-xl">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-center gap-4">
+              <div className="rounded-2xl bg-white/10 p-3">
+                <Gauge className="h-6 w-6 text-teal-300" />
+              </div>
               <div>
-                <h2 className="text-2xl font-semibold text-slate-900">
-                  Connect Your Grip Trainer
-                </h2>
-                <p className="mt-2 max-w-xl text-sm text-slate-500">
-                  Connect via Wi-Fi to track your grip force in real-time.
+                <h1 className="text-2xl font-semibold">GripForge</h1>
+                <p className="text-sm text-white/70">
+                  Smart grip dynamometer dashboard
                 </p>
               </div>
-              <button
-                onClick={handleConnect}
-                className="rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white shadow-soft transition hover:bg-slate-800"
-              >
-                Connect Device
-              </button>
             </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <span
+                className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${connectionColor} ${status === "connected" ? "shadow-[0_0_16px_rgba(16,185,129,0.35)]" : ""}`}
+              >
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    status === "connected"
+                      ? "bg-emerald-500 animate-pulse"
+                      : status === "connecting"
+                        ? "bg-amber-500"
+                        : "bg-slate-400"
+                  }`}
+                />
+                {connectionLabel}
+              </span>
+              <div className="relative">
+                <select
+                  value={activeProfile.profile.name}
+                  onChange={(event) => handleProfileChange(event.target.value)}
+                  className="appearance-none rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm text-white outline-none backdrop-blur"
+                >
+                  {profiles.map((entry) => (
+                    <option key={entry.profile.name} value={entry.profile.name}>
+                      {entry.profile.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-3 top-2.5 h-4 w-4 text-white/60" />
+              </div>
+              <div className="flex items-center gap-1 rounded-full bg-white/10 p-1">
+                {([
+                  { value: "wifi", label: "Wi-Fi", icon: <Signal className="h-4 w-4" /> },
+                  { value: "bluetooth", label: "Bluetooth", icon: <Bluetooth className="h-4 w-4" /> },
+                  { value: "demo", label: "Demo", icon: <Radio className="h-4 w-4" /> }
+                ] as const).map((item) => (
+                  <button
+                    key={item.value}
+                    onClick={() => {
+                      setConnectionMode(item.value);
+                      setConnectionNote(null);
+                    }}
+                    className={`flex items-center gap-2 rounded-full px-3 py-2 text-xs font-semibold transition ${
+                      connectionMode === item.value
+                        ? "bg-white text-slate-900"
+                        : "text-white/70 hover:text-white"
+                    }`}
+                  >
+                    {item.icon}
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          {connectionNote && (
+            <div className="mt-4 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm text-white/80">
+              {connectionNote}
+            </div>
+          )}
+        </header>
 
-            <div className="mt-10 grid gap-8 lg:grid-cols-[1.2fr_1fr]">
-              <GaugeDisplay force={forceData.force} units={forceData.units} />
-              <div className="flex flex-col gap-4">
-                <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+        {(error || connectionMode === "bluetooth") && (
+          <div className="rounded-2xl border border-indigo-100 bg-white px-4 py-3 text-sm text-slate-600 shadow-sm">
+            {error ? (
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <span>{error}</span>
+                <button
+                  className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-teal-400 via-indigo-400 to-purple-400 px-4 py-2 text-xs font-semibold text-white shadow transition hover:scale-[1.02]"
+                  onClick={() => setConnectionMode("demo")}
+                >
+                  Switch to Demo Mode
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <BluetoothOff className="h-4 w-4 text-indigo-500" />
+                <span>
+                  Bluetooth mode requires Desktop Chrome or Bluefy on iOS. Normal
+                  iPhone Safari/Chrome does not support Web Bluetooth.
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
+        <section className="grid gap-6 lg:grid-cols-[2fr_1fr]">
+          <div className="rounded-3xl border border-slate-200 bg-white/80 p-6 shadow-xl backdrop-blur">
+            <div className="flex flex-col gap-6">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-widest text-indigo-500">
+                  Live dashboard
+                </p>
+                <h2 className="text-2xl font-semibold text-slate-900">
+                  Track Grip Force in Real Time
+                </h2>
+                <p className="mt-2 text-sm text-slate-500">
+                  {connectionCopy[connectionMode]}
+                </p>
+              </div>
+              <div className="grid gap-6 md:grid-cols-[1.2fr_1fr]">
+                <div className="flex flex-col justify-between gap-4 rounded-2xl border border-slate-100 bg-white px-5 py-6 shadow-sm">
                   <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                        Device Status
-                      </p>
-                      <p className="mt-2 text-lg font-semibold text-slate-900">
-                        {isConnected ? "Connected" : "Not connected"}
-                      </p>
-                    </div>
-                    {isConnected ? (
-                      <Signal className="h-6 w-6 text-emerald-500" />
-                    ) : (
-                      <BluetoothOff className="h-6 w-6 text-slate-400" />
+                    <div className="text-sm text-slate-500">Live Force</div>
+                    {batteryVoltage !== null && (
+                      <div className="flex items-center gap-1 text-xs text-slate-400">
+                        <Battery className="h-4 w-4" />
+                        {batteryVoltage.toFixed(2)}v
+                      </div>
                     )}
                   </div>
-                  {batteryVoltage !== null && (
-                    <div className="mt-3 flex items-center gap-2 text-sm text-slate-500">
-                      <Battery className="h-4 w-4" />
-                      Battery {batteryVoltage.toFixed(2)}V
+                  <div>
+                    <div className="text-4xl font-semibold text-slate-900 sm:text-5xl">
+                      {animatedForce.toFixed(1)}
+                      <span className="ml-2 text-lg font-medium text-slate-400">
+                        {unitsLabel[preferredUnits]}
+                      </span>
                     </div>
-                  )}
+                    <p className="mt-2 text-xs text-slate-400">
+                      {status === "connected"
+                        ? "Streaming live grip data"
+                        : "Awaiting connection"}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={status === "connected" ? disconnect : connect}
+                      className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-teal-400 via-indigo-400 to-purple-400 px-5 py-2 text-sm font-semibold text-white shadow-lg transition hover:scale-[1.02]"
+                    >
+                      {status === "connected" ? (
+                        <Square className="h-4 w-4" />
+                      ) : (
+                        <Play className="h-4 w-4" />
+                      )}
+                      {status === "connected" ? "Disconnect" : "Connect"}
+                    </button>
+                    <button
+                      onClick={sessionActive ? stopSessionHandler : startSessionHandler}
+                      className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                    >
+                      {sessionActive ? (
+                        <Square className="h-4 w-4" />
+                      ) : (
+                        <Play className="h-4 w-4" />
+                      )}
+                      {sessionActive ? "Stop Session" : "Start Session"}
+                    </button>
+                  </div>
                 </div>
-
-                <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                    Session Controls
-                  </p>
-                  <div className="mt-4 flex flex-wrap items-center gap-3">
-                    <button
-                      onClick={startSession}
-                      disabled={sessionActive}
-                      className="flex items-center gap-2 rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-emerald-200"
-                    >
-                      <Play className="h-4 w-4" />
-                      Start
-                    </button>
-                    <button
-                      onClick={stopSession}
-                      disabled={!sessionActive}
-                      className="flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
-                    >
-                      <Square className="h-4 w-4" />
-                      Stop
-                    </button>
-                    <div className="flex items-center gap-2 rounded-full bg-white px-3 py-2 text-sm text-slate-600">
-                      <Timer className="h-4 w-4" />
-                      {formatDuration(sessionMetrics.durationMs)}
+                <div className="flex flex-col items-center justify-center rounded-2xl border border-slate-100 bg-white px-5 py-6 shadow-sm">
+                  <GaugeArc value={animatedForce} max={gaugeMax} />
+                  <div className="-mt-2 text-sm text-slate-500">
+                    {gaugeMax} {unitsLabel[preferredUnits]} max
+                  </div>
+                </div>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                {[
+                  { label: "Max Grip", value: stats.maxGrip, icon: <Activity className="h-4 w-4" /> },
+                  { label: "Avg Force", value: stats.avgForce, icon: <LineChartIcon className="h-4 w-4" /> },
+                  { label: "Longest Hold", value: stats.longestHold / 1000, suffix: "s", icon: <Timer className="h-4 w-4" /> },
+                  {
+                    label: "Sessions",
+                    value: stats.sessions,
+                    icon: <Signal className="h-4 w-4" />,
+                    format: (value: number) => value.toString()
+                  }
+                ].map((stat) => (
+                  <div
+                    key={stat.label}
+                    className="rounded-2xl border border-slate-100 bg-white px-4 py-4 shadow-sm"
+                  >
+                    <div className="flex items-center justify-between text-xs text-slate-400">
+                      <span>{stat.label}</span>
+                      {stat.icon}
+                    </div>
+                    <div className="mt-2 text-2xl font-semibold text-slate-900">
+                      {stat.format ? stat.format(stat.value) : stat.value.toFixed(1)}
+                      {stat.suffix ? (
+                        <span className="ml-1 text-sm font-medium text-slate-400">
+                          {stat.suffix}
+                        </span>
+                      ) : (
+                        <span className="ml-1 text-sm font-medium text-slate-400">
+                          {stat.label === "Sessions" ? "" : unitsLabel[preferredUnits]}
+                        </span>
+                      )}
                     </div>
                   </div>
-                  <div className="mt-4 flex items-center gap-3 text-sm text-slate-600">
-                    <span>Hand:</span>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-6">
+            <div className="rounded-3xl border border-slate-200 bg-white/80 p-6 shadow-xl backdrop-blur">
+              <h3 className="text-lg font-semibold text-slate-900">
+                Training Modes
+              </h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Customize sessions and targets per profile.
+              </p>
+              <div className="mt-4 grid gap-4">
+                {(Object.keys(modeDetails) as TrainingMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => setActiveMode(mode)}
+                    className={`rounded-2xl border px-4 py-3 text-left transition ${
+                      activeMode === mode
+                        ? "border-indigo-400 bg-indigo-50 shadow"
+                        : "border-slate-100 bg-white hover:border-indigo-200"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-semibold text-slate-900">
+                          {modeDetails[mode].title}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {modeDetails[mode].description}
+                        </p>
+                      </div>
+                      <div
+                        className={`h-8 w-8 rounded-full ${
+                          activeMode === mode
+                            ? "bg-gradient-to-br from-teal-400 via-indigo-400 to-purple-400"
+                            : "bg-slate-100"
+                        }`}
+                      />
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <div className="mt-6 space-y-4 rounded-2xl border border-slate-100 bg-white px-4 py-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-slate-500">Hand</span>
+                  <div className="flex gap-2">
                     {(["Right", "Left"] as const).map((hand) => (
                       <button
                         key={hand}
                         onClick={() => setSessionHand(hand)}
-                        className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                        className={`rounded-full px-3 py-1 text-xs font-semibold ${
                           sessionHand === hand
                             ? "bg-slate-900 text-white"
-                            : "bg-white text-slate-500"
+                            : "bg-slate-100 text-slate-500"
                         }`}
                       >
                         {hand}
@@ -633,423 +690,205 @@ const App = () => {
                     ))}
                   </div>
                 </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-slate-500">Units</span>
+                  <select
+                    value={preferredUnits}
+                    onChange={(event) =>
+                      handleUnitChange(event.target.value as Units)
+                    }
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs"
+                  >
+                    {Object.keys(unitsLabel).map((unit) => (
+                      <option key={unit} value={unit}>
+                        {unit}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-slate-500">Endurance Target</span>
+                  <input
+                    type="number"
+                    value={activeProfile.profile.endurance.targetForce}
+                    onChange={(event) =>
+                      handleTargetChange(Number(event.target.value))
+                    }
+                    className="w-24 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs"
+                  />
+                </div>
+                <div>
+                  <span className="text-sm text-slate-500">Pyramid Steps</span>
+                  <input
+                    type="text"
+                    value={activeProfile.profile.pyramid.steps.join(", ")}
+                    onChange={(event) => handlePyramidChange(event.target.value)}
+                    className="mt-2 w-full rounded-full border border-slate-200 bg-white px-3 py-1 text-xs"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
 
-                <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                    Demo Mode
+        <section className="grid gap-6 lg:grid-cols-[2fr_1fr]">
+          <div className="grid gap-6">
+            <div className="rounded-3xl border border-slate-200 bg-white/80 p-6 shadow-xl backdrop-blur">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-900">
+                    Progress Overview
+                  </h3>
+                  <p className="text-sm text-slate-500">
+                    Session max force over time
                   </p>
-                  <div className="mt-3 flex items-center justify-between text-sm text-slate-600">
-                    <span>Simulate grip force data offline.</span>
-                    <label className="relative inline-flex cursor-pointer items-center">
-                      <input
-                        type="checkbox"
-                        className="peer sr-only"
-                        checked={demoMode}
-                        onChange={(event) => setDemoMode(event.target.checked)}
-                      />
-                      <div className="peer h-6 w-11 rounded-full bg-slate-200 after:absolute after:left-1 after:top-1 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition peer-checked:bg-sky-500 peer-checked:after:translate-x-5" />
-                    </label>
-                  </div>
                 </div>
+                <LineChartIcon className="h-5 w-5 text-indigo-400" />
+              </div>
+              <div className="mt-4 h-40">
+                <ForceChart
+                  data={[...profileSessions]
+                    .reverse()
+                    .map((session) => session.maxForce)}
+                />
               </div>
             </div>
-          </div>
-
-          <div className="flex flex-col gap-4 rounded-3xl bg-white p-6 shadow-soft">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                  Active Mode
-                </p>
-                <h3 className="text-xl font-semibold text-slate-900">
-                  {modeDetails[activeMode].title}
-                </h3>
-              </div>
-              <Radio className="h-6 w-6 text-sky-500" />
-            </div>
-            <p className="text-sm text-slate-500">
-              {modeDetails[activeMode].description}
-            </p>
-
-            {activeMode === "max" && (
-              <ModeInsight
-                label="Peak This Session"
-                value={`${sessionMetrics.maxForce.toFixed(1)} ${unitsLabel[forceData.units]}`}
-              />
-            )}
-
-            {activeMode === "endurance" && (
-              <div className="flex flex-col gap-3">
-                <label className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                  Target Force ({unitsLabel[forceData.units]})
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  value={activeProfile?.endurance.targetForce ?? 0}
-                  onChange={(event) =>
-                    updateProfileConfig({
-                      endurance: {
-                        targetForce: Number(event.target.value)
-                      }
-                    })
-                  }
-                  className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                />
-                <ModeInsight
-                  label="Time Above Target"
-                  value={formatDuration(sessionMetrics.longestHoldMs)}
-                />
-              </div>
-            )}
-
-            {activeMode === "pyramid" && (
-              <div className="flex flex-col gap-3">
-                <label className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                  Pyramid Steps ({unitsLabel[forceData.units]})
-                </label>
-                <input
-                  type="text"
-                  value={(activeProfile?.pyramid.steps ?? []).join(", ")}
-                  onChange={(event) =>
-                    updateProfileConfig({
-                      pyramid: {
-                        steps: event.target.value
-                          .split(",")
-                          .map((step) => Number(step.trim()))
-                          .filter((value) => !Number.isNaN(value))
-                      }
-                    })
-                  }
-                  className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                />
-                <div className="flex flex-wrap gap-2">
-                  {(activeProfile?.pyramid.steps ?? []).map((step, index) => (
-                    <span
-                      key={`${step}-${index}`}
-                      className="rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-600"
-                    >
-                      {step} {unitsLabel[forceData.units]}
-                    </span>
-                  ))}
+            <div className="rounded-3xl border border-slate-200 bg-white/80 p-6 shadow-xl backdrop-blur">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-900">
+                    Live Session Trace
+                  </h3>
+                  <p className="text-sm text-slate-500">
+                    Force vs time in current session
+                  </p>
                 </div>
+                <Activity className="h-5 w-5 text-indigo-400" />
               </div>
-            )}
-
-            {activeMode === "free" && (
-              <ModeInsight
-                label="Live Average"
-                value={`${sessionMetrics.avgForce.toFixed(1)} ${unitsLabel[forceData.units]}`}
-              />
-            )}
-          </div>
-        </section>
-
-        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard
-            title="Max Grip"
-            value={`${stats.maxGrip.toFixed(1)} ${unitsLabel[forceData.units]}`}
-          />
-          <StatCard
-            title="Avg Force"
-            value={`${stats.avgForce.toFixed(1)} ${unitsLabel[forceData.units]}`}
-          />
-          <StatCard
-            title="Longest Hold"
-            value={formatDuration(stats.longestHoldMs)}
-          />
-          <StatCard title="Sessions" value={stats.sessions.toString()} />
-        </section>
-
-        <section>
-          <div className="mb-4 flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-slate-900">Training Modes</h3>
-            <span className="text-sm text-slate-500">
-              Tap a mode to configure your session.
-            </span>
-          </div>
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            {(Object.keys(modeDetails) as TrainingMode[]).map((mode) => (
-              <ModeCard
-                key={mode}
-                active={activeMode === mode}
-                title={modeDetails[mode].title}
-                description={modeDetails[mode].description}
-                onClick={() => setActiveMode(mode)}
-              />
-            ))}
-          </div>
-        </section>
-
-        <section className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
-          <div className="rounded-3xl bg-white p-6 shadow-soft">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                  Progress (Strength)
-                </p>
-                <h3 className="text-xl font-semibold text-slate-900">
-                  Performance Trend
-                </h3>
-              </div>
-              <LineChart className="h-6 w-6 text-sky-500" />
-            </div>
-            <div className="mt-6">
-              <svg viewBox="0 0 260 160" className="h-40 w-full">
-                <defs>
-                  <linearGradient id="chart" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.4" />
-                    <stop offset="100%" stopColor="#38bdf8" stopOpacity="0" />
-                  </linearGradient>
-                </defs>
-                <rect x="0" y="0" width="260" height="160" rx="16" fill="#f8fafc" />
-                {chartPoints.length > 1 ? (
-                  <>
-                    <path d={chartPath} stroke="#0ea5e9" strokeWidth="3" fill="none" />
-                    <path
-                      d={`${chartPath} L 250 150 L 10 150 Z`}
-                      fill="url(#chart)"
-                    />
-                  </>
-                ) : (
-                  <text x="50%" y="50%" textAnchor="middle" fill="#94a3b8">
-                    Start a session to see progress.
-                  </text>
-                )}
-              </svg>
-              <div className="mt-4 flex items-center justify-between text-xs text-slate-400">
-                <span>Session history</span>
-                <span>Max: {maxChartValue.toFixed(1)} {unitsLabel[forceData.units]}</span>
+              <div className="mt-4 h-40">
+                <ForceChart data={sessionSamples.map((sample) => sample.force)} />
               </div>
             </div>
           </div>
-
-          <div className="rounded-3xl bg-white p-6 shadow-soft">
+          <div className="rounded-3xl border border-slate-200 bg-white/80 p-6 shadow-xl backdrop-blur">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                <h3 className="text-lg font-semibold text-slate-900">
                   Recent Sessions
+                </h3>
+                <p className="text-sm text-slate-500">
+                  Latest training highlights
                 </p>
-                <h3 className="text-xl font-semibold text-slate-900">Latest Workouts</h3>
               </div>
               <button
                 onClick={() => setShowAllSessions(true)}
-                className="text-sm font-semibold text-sky-600"
+                className="text-xs font-semibold text-indigo-500"
               >
                 View All
               </button>
             </div>
-            <div className="mt-6 flex flex-col gap-4">
+            <div className="mt-4 space-y-3">
               {recentSessions.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-400">
-                  Sessions appear here once you start training.
+                  No sessions yet. Start your first session to see stats.
                 </div>
               ) : (
                 recentSessions.map((session) => (
                   <div
                     key={session.id}
-                    className="flex items-center justify-between rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3"
+                    className="rounded-2xl border border-slate-100 bg-white px-4 py-3 shadow-sm"
                   >
-                    <div>
-                      <p className="text-sm font-semibold text-slate-900">
-                        {modeDetails[session.mode].title} · {session.hand}
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        {new Date(session.startedAt).toLocaleString()}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm font-semibold text-slate-900">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">
+                          {modeDetails[session.mode].title}
+                        </p>
+                        <p className="text-xs text-slate-400">
+                          {new Date(session.startedAt).toLocaleDateString()} · {session.hand}
+                        </p>
+                      </div>
+                      <div className="text-right text-sm font-semibold text-slate-900">
                         {session.maxForce.toFixed(1)} {unitsLabel[session.units]}
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        Hold {formatDuration(session.longestHoldMs)}
-                      </p>
+                        <p className="text-xs text-slate-400">
+                          {formatDuration(session.durationMs)}
+                        </p>
+                      </div>
                     </div>
                   </div>
                 ))
               )}
             </div>
+            <button
+              onClick={() => downloadCsv(profileSessions, activeProfile.profile.name)}
+              className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+            >
+              <Download className="h-4 w-4" />
+              Export CSV
+            </button>
           </div>
         </section>
-      </main>
+      </div>
 
       {showAllSessions && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-          <div className="max-h-[80vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-6 shadow-soft">
-            <div className="flex items-center justify-between">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur">
+          <div className="max-h-[80vh] w-full max-w-2xl overflow-hidden rounded-3xl bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
               <div>
-                <h3 className="text-xl font-semibold text-slate-900">
+                <h3 className="text-lg font-semibold text-slate-900">
                   All Sessions
                 </h3>
                 <p className="text-sm text-slate-500">
-                  Export your training data as CSV.
+                  Full history for {activeProfile.profile.name}
                 </p>
               </div>
               <button
                 onClick={() => setShowAllSessions(false)}
-                className="text-sm font-semibold text-slate-500"
+                className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500"
               >
                 Close
               </button>
             </div>
-            <div className="mt-4 flex justify-end">
-              <button
-                onClick={() => downloadCsv(sessions, activeProfileName)}
-                className="flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
-              >
-                <Download className="h-4 w-4" />
-                Export CSV
-              </button>
-            </div>
-            <div className="mt-6 flex flex-col gap-3">
-              {sessions.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-400">
-                  No sessions yet.
-                </div>
+            <div className="max-h-[60vh] overflow-y-auto px-6 py-4">
+              {profileSessions.length === 0 ? (
+                <p className="text-sm text-slate-400">No sessions yet.</p>
               ) : (
-                sessions.map((session) => (
-                  <div
-                    key={session.id}
-                    className="flex flex-col gap-2 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    <div>
-                      <p className="text-sm font-semibold text-slate-900">
-                        {modeDetails[session.mode].title} · {session.hand}
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        {new Date(session.startedAt).toLocaleString()} · Duration {formatDuration(
-                          session.durationMs
-                        )}
-                      </p>
+                <div className="space-y-3">
+                  {profileSessions.map((session) => (
+                    <div
+                      key={session.id}
+                      className="rounded-2xl border border-slate-100 bg-white px-4 py-3"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">
+                            {modeDetails[session.mode].title}
+                          </p>
+                          <p className="text-xs text-slate-400">
+                            {new Date(session.startedAt).toLocaleString()} · {session.hand}
+                          </p>
+                        </div>
+                        <div className="text-right text-sm font-semibold text-slate-900">
+                          {session.maxForce.toFixed(1)} {unitsLabel[session.units]}
+                          <p className="text-xs text-slate-400">
+                            {formatDuration(session.durationMs)}
+                          </p>
+                        </div>
+                      </div>
                     </div>
-                    <div className="text-sm text-slate-600">
-                      Max {session.maxForce.toFixed(1)} {unitsLabel[session.units]} · Avg {session.avgForce.toFixed(
-                        1
-                      )}{" "}
-                      {unitsLabel[session.units]}
-                    </div>
-                  </div>
-                ))
+                  ))}
+                </div>
               )}
             </div>
+            <div className="border-t border-slate-100 px-6 py-4">
+              <button
+                onClick={() => downloadCsv(profileSessions, activeProfile.profile.name)}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-teal-400 via-indigo-400 to-purple-400 px-4 py-2 text-sm font-semibold text-white"
+              >
+                <Download className="h-4 w-4" />
+                Download CSV
+              </button>
+            </div>
           </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-const GaugeDisplay = ({ force, units }: { force: number; units: Units }) => {
-  const clamped = Math.min(100, Math.max(0, force));
-  const angle = (clamped / 100) * 180;
-  const radius = 120;
-  const center = 140;
-  const x = center + radius * Math.cos(Math.PI - (angle * Math.PI) / 180);
-  const y = center - radius * Math.sin(Math.PI - (angle * Math.PI) / 180);
-
-  return (
-    <div className="flex flex-col items-center gap-4">
-      <svg viewBox="0 0 280 160" className="h-48 w-full">
-        <path
-          d="M20 140 A120 120 0 0 1 260 140"
-          stroke="#e2e8f0"
-          strokeWidth="16"
-          fill="none"
-        />
-        <path
-          d="M20 140 A120 120 0 0 1 260 140"
-          stroke="#0ea5e9"
-          strokeWidth="16"
-          fill="none"
-          strokeDasharray={`${(angle / 180) * 377} 377`}
-        />
-        <circle cx={x} cy={y} r="10" fill="#0ea5e9" />
-        <text x="50%" y="120" textAnchor="middle" fill="#0f172a" fontSize="36" fontWeight="600">
-          {force.toFixed(1)}
-        </text>
-        <text x="50%" y="145" textAnchor="middle" fill="#94a3b8" fontSize="14">
-          {unitsLabel[units]} / 0-100
-        </text>
-      </svg>
-      <div className="flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-slate-400">
-        Live Force
-      </div>
-    </div>
-  );
-};
-
-const StatCard = ({ title, value }: { title: string; value: string }) => (
-  <div className="rounded-2xl bg-white p-4 shadow-soft">
-    <p className="text-xs uppercase tracking-[0.2em] text-slate-400">{title}</p>
-    <p className="mt-3 text-2xl font-semibold text-slate-900">{value}</p>
-  </div>
-);
-
-const ModeCard = ({
-  title,
-  description,
-  active,
-  onClick
-}: {
-  title: string;
-  description: string;
-  active: boolean;
-  onClick: () => void;
-}) => (
-  <button
-    onClick={onClick}
-    className={`rounded-2xl border px-4 py-5 text-left shadow-soft transition ${
-      active
-        ? "border-sky-200 bg-sky-50"
-        : "border-slate-100 bg-white hover:border-sky-100"
-    }`}
-  >
-    <h4 className="text-base font-semibold text-slate-900">{title}</h4>
-    <p className="mt-2 text-sm text-slate-500">{description}</p>
-  </button>
-);
-
-const ModeInsight = ({ label, value }: { label: string; value: string }) => (
-  <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
-    <p className="text-xs uppercase tracking-[0.2em] text-slate-400">{label}</p>
-    <p className="mt-2 text-lg font-semibold text-slate-900">{value}</p>
-  </div>
-);
-
-const ProfileCreator = ({ onCreate }: { onCreate: (name: string) => void }) => {
-  const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
-
-  return (
-    <div className="relative">
-      <button
-        onClick={() => setOpen((prev) => !prev)}
-        className="rounded-full bg-white px-3 py-2 text-sm font-semibold text-slate-600 shadow-soft"
-      >
-        Manage
-      </button>
-      {open && (
-        <div className="absolute right-0 top-12 z-10 w-56 rounded-2xl border border-slate-100 bg-white p-4 shadow-soft">
-          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-            Add Profile
-          </p>
-          <input
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            placeholder="Name"
-            className="mt-3 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-          />
-          <button
-            onClick={() => {
-              onCreate(name);
-              setName("");
-              setOpen(false);
-            }}
-            className="mt-3 w-full rounded-full bg-slate-900 px-3 py-2 text-sm font-semibold text-white"
-          >
-            Add
-          </button>
         </div>
       )}
     </div>
