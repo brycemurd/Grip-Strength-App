@@ -10,13 +10,6 @@ const defaultProfile: ProfileConfig = {
   preferredUnits: "kg"
 };
 
-export const demoProfile: ProfileConfig = {
-  name: "Demo User",
-  endurance: { targetForce: 30 },
-  pyramid: { steps: [15, 25, 35, 25, 15] },
-  preferredUnits: "kg"
-};
-
 export const loadProfiles = (): ProfileData[] => {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) {
