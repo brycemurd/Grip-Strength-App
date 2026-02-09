@@ -8,4 +8,13 @@
 
 body {
   font-family: "Inter", system-ui, sans-serif;
+  margin: 0;
+  background-color: #f8fafc;
+  background-image: radial-gradient(
+      rgba(99, 102, 241, 0.08) 1px,
+      transparent 1px
+    ),
+    radial-gradient(rgba(20, 184, 166, 0.08) 1px, transparent 1px);
+  background-position: 0 0, 20px 20px;
+  background-size: 40px 40px;
 }
