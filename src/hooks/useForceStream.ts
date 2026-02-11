@@ -11,12 +11,12 @@ export type ConnectionMode = "wifi" | "bluetooth";
 
 type UseForceStreamOptions = {
   mode: ConnectionMode;
-  onFallbackMode?: (mode: ConnectionMode, reason: string) => void;
+  onConnectionIssue?: (reason: string) => void;
 };
 
 export const useForceStream = ({
   mode,
-  onFallbackMode
+  onConnectionIssue
 }: UseForceStreamOptions) => {
   const [status, setStatus] = useState<ConnectionStatus>("disconnected");
   const [error, setError] = useState<string | null>(null);
@@ -33,10 +33,7 @@ export const useForceStream = ({
     if (mode === "wifi") {
       return createWifiSource();
     }
-    if (mode === "bluetooth") {
-      return createBluetoothSource();
-    }
-    return createWifiSource();
+    return createBluetoothSource();
   }, [mode]);
 
   const disconnect = useCallback(() => {
@@ -55,7 +52,7 @@ export const useForceStream = ({
         onError: (message) => {
           setError(message);
           setStatus("disconnected");
-          onFallbackMode?.("wifi", message);
+          onConnectionIssue?.(message);
         },
         onMeta: ({ batteryVoltage }) => {
           if (typeof batteryVoltage === "number") {
@@ -69,9 +66,9 @@ export const useForceStream = ({
         error instanceof Error ? error.message : "Unable to connect.";
       setError(message);
       setStatus("disconnected");
-      onFallbackMode?.("wifi", message);
+      onConnectionIssue?.(message);
     }
-  }, [disconnect, mode, onFallbackMode, source]);
+  }, [disconnect, onConnectionIssue, source]);
 
   const startSession = useCallback(async () => {
     await sourceRef.current?.startSession?.();
@@ -83,7 +80,7 @@ export const useForceStream = ({
 
   useEffect(() => {
     disconnect();
-  }, [connect, disconnect, mode]);
+  }, [disconnect, mode]);
 
   return {
     status,

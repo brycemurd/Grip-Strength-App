@@ -10,6 +10,7 @@ import {
   LineChart as LineChartIcon,
   Plus,
   Play,
+  Search,
   Signal,
   Square,
   Timer
@@ -274,8 +275,7 @@ const App = () => {
   const { status, error, sample, batteryVoltage, connect, disconnect, startSession, stopSession } =
     useForceStream({
       mode: connectionMode,
-      onFallbackMode: (mode, reason) => {
-        setConnectionMode(mode);
+      onConnectionIssue: (reason) => {
         setConnectionNote(reason);
       }
     });
@@ -526,12 +526,21 @@ const App = () => {
             {error ? (
               <span>{error}</span>
             ) : (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
                 <BluetoothOff className="h-4 w-4 text-indigo-500" />
                 <span>
                   Bluetooth mode requires Desktop Chrome or Bluefy on iOS. Normal
                   iPhone Safari/Chrome does not support Web Bluetooth.
                 </span>
+                </div>
+                <button
+                  onClick={connect}
+                  className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-100"
+                >
+                  <Search className="h-4 w-4" />
+                  Search for GripForge
+                </button>
               </div>
             )}
           </div>
@@ -588,7 +597,7 @@ const App = () => {
                       {status === "connected"
                         ? "Disconnect"
                         : connectionMode === "bluetooth"
-                          ? "Connect Bluetooth"
+                          ? "Search & Connect Bluetooth"
                           : "Connect Wi-Fi"}
                     </button>
                     <button
@@ -603,6 +612,11 @@ const App = () => {
                       {sessionActive ? "Stop Session" : "Start Session"}
                     </button>
                   </div>
+                  {connectionMode === "bluetooth" && status !== "connected" && (
+                    <p className="text-xs text-slate-400">
+                      Tap <span className="font-semibold">Search & Connect Bluetooth</span> to open your browser's device picker and select <span className="font-semibold">GripForge</span>.
+                    </p>
+                  )}
                 </div>
                 <div className="flex flex-col items-center justify-center rounded-2xl border border-slate-100 bg-white px-5 py-6 shadow-sm">
                   <GaugeArc value={animatedForce} max={gaugeMax} />

@@ -73,6 +73,8 @@ If the device is not reachable, the UI shows a banner so you can verify the conn
 - Characteristic UUID (Notify + Read): `6e31cb61-0acf-4001-acb3-abac9a94211d`
 - Payload: ASCII numeric string like `"12.3"` (lbf), sent via notify ~5Hz
 
+These UUIDs and the device name are defined in `src/lib/bleConstants.ts` and are already aligned with your ESP32 Arduino sketch values.
+
 ## Project Structure
 
 ```

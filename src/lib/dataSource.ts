@@ -20,6 +20,13 @@ export type ForceSource = {
   stopSession?: () => Promise<void>;
 };
 
+const decodeForcePayload = (value: DataView) => {
+  const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  const decoded = new TextDecoder().decode(bytes).replace(/\0/g, "").trim();
+  const parsed = Number.parseFloat(decoded);
+  return Number.isNaN(parsed) ? null : parsed;
+};
+
 const getWsUrl = () => {
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
   return `${protocol}://${window.location.host}/ws`;
@@ -170,10 +177,8 @@ export const createBluetoothSource = (): ForceSource => ({
       if (!target.value) {
         return;
       }
-      const decoder = new TextDecoder();
-      const decoded = decoder.decode(target.value.buffer);
-      const parsed = Number.parseFloat(decoded);
-      if (Number.isNaN(parsed)) {
+      const parsed = decodeForcePayload(target.value);
+      if (parsed === null) {
         return;
       }
       handlers.onStatus("connected");
@@ -205,6 +210,16 @@ export const createBluetoothSource = (): ForceSource => ({
     characteristic = await service.getCharacteristic(
       GRIPFORGE_CHARACTERISTIC_UUID
     );
+
+    const firstValue = await characteristic.readValue();
+    const firstParsed = decodeForcePayload(firstValue);
+    if (firstParsed !== null) {
+      handlers.onSample({
+        force: firstParsed,
+        units: "lbf",
+        timestamp_ms: Date.now()
+      });
+    }
 
     await characteristic.startNotifications();
     characteristic.addEventListener("characteristicvaluechanged", handleValue);
