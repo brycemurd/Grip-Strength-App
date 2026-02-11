@@ -35,37 +35,16 @@ The build output lands in `dist/` and is ready to be copied to the ESP32 filesys
 4. Use the **Arduino ESP32 LittleFS Upload** tool to upload the `data/` folder to the ESP32.
 5. Ensure your ESP32 sketch serves LittleFS at `http://192.168.4.1`.
 
-## Connection Modes
+## Bluetooth Connection (Primary)
 
-### 1) Wi-Fi Mode (Primary)
-- The ESP32 hosts the site at `http://192.168.4.1` (offline).
-- The app tries WebSocket first and falls back to polling every 150ms.
+The dashboard now uses Bluetooth mode as the main connection flow.
 
-**Endpoints**
-- `GET /api/force`
-  ```json
-  {
-    "force": 32.5,
-    "units": "kg",
-    "timestamp_ms": 1730000000000,
-    "battery_v": 4.05,
-    "is_connected": true
-  }
-  ```
-- `POST /api/session/start`
-- `POST /api/session/stop`
-- `ws://<host>/ws` streaming payload:
-  ```json
-  { "force": 32.5, "units": "kg", "timestamp_ms": 1730000000000 }
-  ```
-
-If the device is not reachable, the UI shows a banner so you can verify the connection.
-
-### 2) Bluetooth Mode (Optional / Experimental)
+### Bluetooth Mode
 - Uses the Web Bluetooth API.
 - Supported in **Desktop Chrome** and **Bluefy on iOS**.
 - **Not supported in normal iPhone Safari or Chrome**.
 - **Web Bluetooth requires a secure context** (`https://` or `http://localhost`).
+- Click **Search for GripForge** or **Search & Connect Bluetooth** in the UI to open the device picker.
 
 **BLE Details**
 - Device name: `GripForge`
@@ -96,3 +75,4 @@ src/
 ## Notes
 - Built for static hosting on ESP32 LittleFS.
 - Keep bundles light and dependencies minimal.
+- Profiles support optional passwords, friends, and a local leaderboard.

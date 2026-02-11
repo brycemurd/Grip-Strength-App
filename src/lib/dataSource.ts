@@ -148,6 +148,11 @@ export const createWifiSource = (): ForceSource => ({
 
 export const createBluetoothSource = (): ForceSource => ({
   connect: async (handlers) => {
+    if (!window.isSecureContext) {
+      throw new Error(
+        "Bluetooth requires a secure context. Open this dashboard on https:// or localhost."
+      );
+    }
     if (!("bluetooth" in navigator)) {
       throw new Error(
         "Bluetooth mode requires Desktop Chrome or Bluefy on iOS."
@@ -189,11 +194,18 @@ export const createBluetoothSource = (): ForceSource => ({
       });
     };
 
-    const device = await navigator.bluetooth.requestDevice({
-      filters: [
-        { name: GRIPFORGE_DEVICE_NAME, services: [GRIPFORGE_SERVICE_UUID] }
-      ]
-    });
+    let device: BluetoothDevice;
+    try {
+      device = await navigator.bluetooth.requestDevice({
+        filters: [
+          { name: GRIPFORGE_DEVICE_NAME, services: [GRIPFORGE_SERVICE_UUID] }
+        ]
+      });
+    } catch {
+      throw new Error(
+        "Bluetooth device picker was cancelled or blocked. Please tap Search & Connect Bluetooth and choose GripForge."
+      );
+    }
 
     device.addEventListener("gattserverdisconnected", () => {
       if (active) {

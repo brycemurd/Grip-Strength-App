@@ -8,14 +8,17 @@ import {
   Download,
   Gauge,
   LineChart as LineChartIcon,
+  Lock,
   Plus,
   Play,
   Search,
   Signal,
   Square,
-  Timer
+  Timer,
+  Trophy,
+  UserPlus
 } from "lucide-react";
-import { useForceStream, ConnectionMode } from "./hooks/useForceStream";
+import { useForceStream } from "./hooks/useForceStream";
 import { SessionSample, SessionSummary, TrainingMode, Units } from "./utils/types";
 import {
   addProfile,
@@ -52,10 +55,7 @@ const unitsLabel: Record<Units, string> = {
   lbf: "lbf"
 };
 
-const connectionCopy: Record<ConnectionMode, string> = {
-  wifi: "Connect via Wi-Fi to your GripForge device",
-  bluetooth: "Connect via Bluetooth (Web Bluetooth)"
-};
+const connectionCopy = "Connect via Bluetooth (Web Bluetooth)";
 
 const formatDuration = (ms: number) => {
   const totalSeconds = Math.max(0, Math.round(ms / 1000));
@@ -252,7 +252,7 @@ const App = () => {
   const [activeProfileName, setActiveProfileName] = useState(() =>
     loadActiveProfileName()
   );
-  const [connectionMode, setConnectionMode] = useState<ConnectionMode>("wifi");
+  const connectionMode = "bluetooth";
   const [showAllSessions, setShowAllSessions] = useState(false);
   const [activeMode, setActiveMode] = useState<TrainingMode>("max");
   const [sessionActive, setSessionActive] = useState(false);
@@ -260,6 +260,8 @@ const App = () => {
   const [connectionNote, setConnectionNote] = useState<string | null>(null);
   const [showAddProfile, setShowAddProfile] = useState(false);
   const [newProfileName, setNewProfileName] = useState("");
+  const [newProfilePassword, setNewProfilePassword] = useState("");
+  const [friendName, setFriendName] = useState("");
 
   const sessionSamplesRef = useRef<SessionSample[]>([]);
   const [sessionSamples, setSessionSamples] = useState<SessionSample[]>([]);
@@ -274,7 +276,7 @@ const App = () => {
 
   const { status, error, sample, batteryVoltage, connect, disconnect, startSession, stopSession } =
     useForceStream({
-      mode: connectionMode,
+      mode: "bluetooth",
       onConnectionIssue: (reason) => {
         setConnectionNote(reason);
       }
@@ -328,6 +330,17 @@ const App = () => {
       sessions: profileSessions.length
     };
   }, [profileSessions]);
+
+  const leaderboard = useMemo(() => {
+    return profiles
+      .map((entry) => ({
+        name: entry.profile.name,
+        best: Math.max(...entry.sessions.map((session) => session.maxForce), 0),
+        sessions: entry.sessions.length
+      }))
+      .sort((a, b) => b.best - a.best)
+      .slice(0, 5);
+  }, [profiles]);
 
   const gaugeMax = preferredUnits === "kg" ? 100 : preferredUnits === "lbf" ? 220 : 980;
 
@@ -393,6 +406,16 @@ const App = () => {
   };
 
   const handleProfileChange = (name: string) => {
+    const profile = profiles.find((entry) => entry.profile.name === name);
+    if (profile?.profile.password) {
+      const typedPassword = window.prompt(
+        `Enter password for ${profile.profile.name}`
+      );
+      if (typedPassword !== profile.profile.password) {
+        setConnectionNote("Incorrect profile password.");
+        return;
+      }
+    }
     setActiveProfileName(name);
     saveActiveProfileName(name);
   };
@@ -404,13 +427,36 @@ const App = () => {
     }
     const updatedProfile = {
       ...activeProfile.profile,
-      name: trimmed
+      name: trimmed,
+      password: newProfilePassword,
+      friends: []
     };
     setProfiles((current) => addProfile(current, updatedProfile));
     setActiveProfileName(trimmed);
     saveActiveProfileName(trimmed);
     setNewProfileName("");
+    setNewProfilePassword("");
     setShowAddProfile(false);
+  };
+
+  const handleAddFriend = () => {
+    const trimmed = friendName.trim();
+    if (!trimmed) {
+      return;
+    }
+    const alreadyExists = activeProfile.profile.friends.some(
+      (friend) => friend.toLowerCase() === trimmed.toLowerCase()
+    );
+    if (alreadyExists) {
+      setFriendName("");
+      return;
+    }
+    const updated = {
+      ...activeProfile.profile,
+      friends: [...activeProfile.profile.friends, trimmed]
+    };
+    setProfiles((current) => updateProfile(current, updated));
+    setFriendName("");
   };
 
   const handleUnitChange = (units: Units) => {
@@ -478,6 +524,7 @@ const App = () => {
                   {profiles.map((entry) => (
                     <option key={entry.profile.name} value={entry.profile.name}>
                       {entry.profile.name}
+                      {entry.profile.password ? " 🔒" : ""}
                     </option>
                   ))}
                 </select>
@@ -490,27 +537,9 @@ const App = () => {
                 <Plus className="h-4 w-4" />
                 Add Profile
               </button>
-              <div className="flex items-center gap-1 rounded-full bg-white/10 p-1">
-                {([
-                  { value: "wifi", label: "Wi-Fi", icon: <Signal className="h-4 w-4" /> },
-                  { value: "bluetooth", label: "Bluetooth", icon: <Bluetooth className="h-4 w-4" /> }
-                ] as const).map((item) => (
-                  <button
-                    key={item.value}
-                    onClick={() => {
-                      setConnectionMode(item.value);
-                      setConnectionNote(null);
-                    }}
-                    className={`flex items-center gap-2 rounded-full px-3 py-2 text-xs font-semibold transition ${
-                      connectionMode === item.value
-                        ? "bg-white text-slate-900"
-                        : "text-white/70 hover:text-white"
-                    }`}
-                  >
-                    {item.icon}
-                    {item.label}
-                  </button>
-                ))}
+              <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-4 py-2 text-xs font-semibold text-white">
+                <Bluetooth className="h-4 w-4 text-cyan-200" />
+                Bluetooth Mode
               </div>
             </div>
           </div>
@@ -528,11 +557,11 @@ const App = () => {
             ) : (
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
-                <BluetoothOff className="h-4 w-4 text-indigo-500" />
-                <span>
-                  Bluetooth mode requires Desktop Chrome or Bluefy on iOS. Normal
-                  iPhone Safari/Chrome does not support Web Bluetooth.
-                </span>
+                  <BluetoothOff className="h-4 w-4 text-indigo-500" />
+                  <span>
+                    Bluetooth mode requires Desktop Chrome or Bluefy on iOS. Normal
+                    iPhone Safari/Chrome does not support Web Bluetooth.
+                  </span>
                 </div>
                 <button
                   onClick={connect}
@@ -557,7 +586,7 @@ const App = () => {
                   Track Grip Force in Real Time
                 </h2>
                 <p className="mt-2 text-sm text-slate-500">
-                  {connectionCopy[connectionMode]}
+                  {connectionCopy}
                 </p>
               </div>
               <div className="grid gap-6 md:grid-cols-[1.2fr_1fr]">
@@ -596,9 +625,7 @@ const App = () => {
                       )}
                       {status === "connected"
                         ? "Disconnect"
-                        : connectionMode === "bluetooth"
-                          ? "Search & Connect Bluetooth"
-                          : "Connect Wi-Fi"}
+                        : "Search & Connect Bluetooth"}
                     </button>
                     <button
                       onClick={sessionActive ? stopSessionHandler : startSessionHandler}
@@ -858,6 +885,85 @@ const App = () => {
             </button>
           </div>
         </section>
+
+        <section className="grid gap-6 lg:grid-cols-2">
+          <div className="rounded-3xl border border-slate-200 bg-white/80 p-6 shadow-xl backdrop-blur">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">
+                  Friends
+                </h3>
+                <p className="text-sm text-slate-500">
+                  Build your training circle and compare progress.
+                </p>
+              </div>
+              <UserPlus className="h-5 w-5 text-indigo-400" />
+            </div>
+            <div className="mt-4 flex gap-2">
+              <input
+                type="text"
+                value={friendName}
+                onChange={(event) => setFriendName(event.target.value)}
+                placeholder="Add friend by name"
+                className="w-full rounded-full border border-slate-200 px-4 py-2 text-sm"
+              />
+              <button
+                onClick={handleAddFriend}
+                className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-cyan-400 to-indigo-500 px-4 py-2 text-sm font-semibold text-white"
+              >
+                <Plus className="h-4 w-4" />
+                Add
+              </button>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {activeProfile.profile.friends.length === 0 ? (
+                <p className="text-sm text-slate-400">No friends added yet.</p>
+              ) : (
+                activeProfile.profile.friends.map((friend) => (
+                  <span
+                    key={friend}
+                    className="rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-600"
+                  >
+                    {friend}
+                  </span>
+                ))
+              )}
+            </div>
+          </div>
+          <div className="rounded-3xl border border-slate-200 bg-white/80 p-6 shadow-xl backdrop-blur">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">
+                  Leaderboard
+                </h3>
+                <p className="text-sm text-slate-500">
+                  Top max-force scores across all profiles.
+                </p>
+              </div>
+              <Trophy className="h-5 w-5 text-amber-500" />
+            </div>
+            <div className="mt-4 space-y-2">
+              {leaderboard.map((entry, index) => (
+                <div
+                  key={entry.name}
+                  className="flex items-center justify-between rounded-2xl border border-slate-100 px-4 py-3"
+                >
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">
+                      #{index + 1} {entry.name}
+                    </p>
+                    <p className="text-xs text-slate-400">
+                      {entry.sessions} sessions
+                    </p>
+                  </div>
+                  <p className="text-sm font-semibold text-slate-700">
+                    {entry.best.toFixed(1)} {unitsLabel[preferredUnits]}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
       </div>
 
       {showAllSessions && (
@@ -951,6 +1057,17 @@ const App = () => {
                 value={newProfileName}
                 onChange={(event) => setNewProfileName(event.target.value)}
                 placeholder="e.g. bryce"
+                className="w-full rounded-full border border-slate-200 px-4 py-2 text-sm text-slate-700"
+              />
+              <label className="flex items-center gap-2 text-xs font-semibold text-slate-500">
+                <Lock className="h-4 w-4" />
+                Profile password (optional)
+              </label>
+              <input
+                type="password"
+                value={newProfilePassword}
+                onChange={(event) => setNewProfilePassword(event.target.value)}
+                placeholder="Leave blank for no password"
                 className="w-full rounded-full border border-slate-200 px-4 py-2 text-sm text-slate-700"
               />
               <button
