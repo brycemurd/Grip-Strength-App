@@ -59,7 +59,7 @@ The build output lands in `dist/` and is ready to be copied to the ESP32 filesys
   { "force": 32.5, "units": "kg", "timestamp_ms": 1730000000000 }
   ```
 
-If the device is not reachable, the UI shows a banner and automatically switches to Demo Mode.
+If the device is not reachable, the UI shows a banner so you can verify the connection.
 
 ### 2) Bluetooth Mode (Optional / Experimental)
 - Uses the Web Bluetooth API.
@@ -72,10 +72,6 @@ If the device is not reachable, the UI shows a banner and automatically switches
 - Service UUID: `0b1b403e-1e94-4048-8468-2c6140047310`
 - Characteristic UUID (Notify + Read): `6e31cb61-0acf-4001-acb3-abac9a94211d`
 - Payload: ASCII numeric string like `"12.3"` (lbf), sent via notify ~5Hz
-
-### 3) Demo Mode
-- Generates realistic grip-force curves with noise, peaks, holds, and drop-offs.
-- Auto-enables if Wi-Fi endpoints fail or Web Bluetooth is unavailable.
 
 ## Project Structure
 

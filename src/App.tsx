@@ -8,8 +8,8 @@ import {
   Download,
   Gauge,
   LineChart as LineChartIcon,
+  Plus,
   Play,
-  Radio,
   Signal,
   Square,
   Timer
@@ -19,7 +19,6 @@ import { SessionSample, SessionSummary, TrainingMode, Units } from "./utils/type
 import {
   addProfile,
   addSession,
-  demoProfile,
   loadActiveProfileName,
   loadProfiles,
   saveActiveProfileName,
@@ -54,8 +53,7 @@ const unitsLabel: Record<Units, string> = {
 
 const connectionCopy: Record<ConnectionMode, string> = {
   wifi: "Connect via Wi-Fi to your GripForge device",
-  bluetooth: "Connect via Bluetooth (Web Bluetooth)",
-  demo: "Running with simulated data"
+  bluetooth: "Connect via Bluetooth (Web Bluetooth)"
 };
 
 const formatDuration = (ms: number) => {
@@ -247,9 +245,8 @@ const ForceChart = ({ data }: { data: number[] }) => {
 const App = () => {
   const [profiles, setProfiles] = useState(() => {
     const initial = loadProfiles();
-    const withDemo = addProfile(initial, demoProfile);
-    saveProfiles(withDemo);
-    return withDemo;
+    saveProfiles(initial);
+    return initial;
   });
   const [activeProfileName, setActiveProfileName] = useState(() =>
     loadActiveProfileName()
@@ -260,6 +257,8 @@ const App = () => {
   const [sessionActive, setSessionActive] = useState(false);
   const [sessionHand, setSessionHand] = useState<"Right" | "Left">("Right");
   const [connectionNote, setConnectionNote] = useState<string | null>(null);
+  const [showAddProfile, setShowAddProfile] = useState(false);
+  const [newProfileName, setNewProfileName] = useState("");
 
   const sessionSamplesRef = useRef<SessionSample[]>([]);
   const [sessionSamples, setSessionSamples] = useState<SessionSample[]>([]);
@@ -398,6 +397,22 @@ const App = () => {
     saveActiveProfileName(name);
   };
 
+  const handleAddProfile = () => {
+    const trimmed = newProfileName.trim();
+    if (!trimmed) {
+      return;
+    }
+    const updatedProfile = {
+      ...activeProfile.profile,
+      name: trimmed
+    };
+    setProfiles((current) => addProfile(current, updatedProfile));
+    setActiveProfileName(trimmed);
+    saveActiveProfileName(trimmed);
+    setNewProfileName("");
+    setShowAddProfile(false);
+  };
+
   const handleUnitChange = (units: Units) => {
     const updated = { ...activeProfile.profile, preferredUnits: units };
     setProfiles((current) => updateProfile(current, updated));
@@ -468,11 +483,17 @@ const App = () => {
                 </select>
                 <ChevronDown className="pointer-events-none absolute right-3 top-2.5 h-4 w-4 text-white/60" />
               </div>
+              <button
+                onClick={() => setShowAddProfile(true)}
+                className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold text-white/80 transition hover:text-white"
+              >
+                <Plus className="h-4 w-4" />
+                Add Profile
+              </button>
               <div className="flex items-center gap-1 rounded-full bg-white/10 p-1">
                 {([
                   { value: "wifi", label: "Wi-Fi", icon: <Signal className="h-4 w-4" /> },
-                  { value: "bluetooth", label: "Bluetooth", icon: <Bluetooth className="h-4 w-4" /> },
-                  { value: "demo", label: "Demo", icon: <Radio className="h-4 w-4" /> }
+                  { value: "bluetooth", label: "Bluetooth", icon: <Bluetooth className="h-4 w-4" /> }
                 ] as const).map((item) => (
                   <button
                     key={item.value}
@@ -503,15 +524,7 @@ const App = () => {
         {(error || connectionMode === "bluetooth") && (
           <div className="rounded-2xl border border-indigo-100 bg-white px-4 py-3 text-sm text-slate-600 shadow-sm">
             {error ? (
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <span>{error}</span>
-                <button
-                  className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-teal-400 via-indigo-400 to-purple-400 px-4 py-2 text-xs font-semibold text-white shadow transition hover:scale-[1.02]"
-                  onClick={() => setConnectionMode("demo")}
-                >
-                  Switch to Demo Mode
-                </button>
-              </div>
+              <span>{error}</span>
             ) : (
               <div className="flex items-center gap-2">
                 <BluetoothOff className="h-4 w-4 text-indigo-500" />
@@ -572,7 +585,11 @@ const App = () => {
                       ) : (
                         <Play className="h-4 w-4" />
                       )}
-                      {status === "connected" ? "Disconnect" : "Connect"}
+                      {status === "connected"
+                        ? "Disconnect"
+                        : connectionMode === "bluetooth"
+                          ? "Connect Bluetooth"
+                          : "Connect Wi-Fi"}
                     </button>
                     <button
                       onClick={sessionActive ? stopSessionHandler : startSessionHandler}
@@ -886,6 +903,48 @@ const App = () => {
               >
                 <Download className="h-4 w-4" />
                 Download CSV
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAddProfile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur">
+          <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-xl">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">
+                  Add Profile
+                </h3>
+                <p className="text-sm text-slate-500">
+                  Create a new athlete profile.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowAddProfile(false)}
+                className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-4 space-y-3">
+              <label className="text-xs font-semibold text-slate-500">
+                Profile name
+              </label>
+              <input
+                type="text"
+                value={newProfileName}
+                onChange={(event) => setNewProfileName(event.target.value)}
+                placeholder="e.g. bryce"
+                className="w-full rounded-full border border-slate-200 px-4 py-2 text-sm text-slate-700"
+              />
+              <button
+                onClick={handleAddProfile}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-teal-400 via-indigo-400 to-purple-400 px-4 py-2 text-sm font-semibold text-white"
+              >
+                <Plus className="h-4 w-4" />
+                Save Profile
               </button>
             </div>
           </div>

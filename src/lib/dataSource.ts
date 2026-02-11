@@ -79,7 +79,7 @@ export const createWifiSource = (): ForceSource => ({
           if (!active) {
             return;
           }
-          handlers.onError("Device not reachable — switch to Demo Mode");
+          handlers.onError(WIFI_FALLBACK_MESSAGE);
           cleanup();
         }
       }, 150);
@@ -214,36 +214,5 @@ export const createBluetoothSource = (): ForceSource => ({
   }
 });
 
-export const createDemoSource = (): ForceSource => ({
-  connect: async (handlers) => {
-    handlers.onStatus("connecting");
-    let active = true;
-
-    const start = Date.now();
-    const interval = window.setInterval(() => {
-      if (!active) {
-        return;
-      }
-      const t = Date.now() - start;
-      const base = 18 + 6 * Math.sin(t / 1400);
-      const peak = 45 + 18 * Math.sin(t / 700 + Math.sin(t / 2000));
-      const hold = Math.max(0, Math.sin(t / 2300));
-      const noise = 1.5 * Math.sin(t / 120) + Math.random() * 1.2;
-      const force = Math.max(0, base + peak * hold + noise);
-      handlers.onStatus("connected");
-      handlers.onSample({
-        force,
-        units: "kg",
-        timestamp_ms: Date.now()
-      });
-    }, 150);
-
-    const cleanup = () => {
-      active = false;
-      window.clearInterval(interval);
-      handlers.onStatus("disconnected");
-    };
-
-    return cleanup;
-  }
-});
+export const WIFI_FALLBACK_MESSAGE =
+  "Device not reachable — check Wi-Fi connection.";

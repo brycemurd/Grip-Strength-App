@@ -2,13 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ConnectionStatus,
   createBluetoothSource,
-  createDemoSource,
   createWifiSource,
   ForceSource
 } from "../lib/dataSource";
 import { ForceSample } from "../utils/types";
 
-export type ConnectionMode = "wifi" | "bluetooth" | "demo";
+export type ConnectionMode = "wifi" | "bluetooth";
 
 type UseForceStreamOptions = {
   mode: ConnectionMode;
@@ -37,7 +36,7 @@ export const useForceStream = ({
     if (mode === "bluetooth") {
       return createBluetoothSource();
     }
-    return createDemoSource();
+    return createWifiSource();
   }, [mode]);
 
   const disconnect = useCallback(() => {
@@ -56,9 +55,7 @@ export const useForceStream = ({
         onError: (message) => {
           setError(message);
           setStatus("disconnected");
-          if (mode !== "demo") {
-            onFallbackMode?.("demo", message);
-          }
+          onFallbackMode?.("wifi", message);
         },
         onMeta: ({ batteryVoltage }) => {
           if (typeof batteryVoltage === "number") {
@@ -72,9 +69,7 @@ export const useForceStream = ({
         error instanceof Error ? error.message : "Unable to connect.";
       setError(message);
       setStatus("disconnected");
-      if (mode !== "demo") {
-        onFallbackMode?.("demo", message);
-      }
+      onFallbackMode?.("wifi", message);
     }
   }, [disconnect, mode, onFallbackMode, source]);
 
@@ -87,10 +82,6 @@ export const useForceStream = ({
   }, []);
 
   useEffect(() => {
-    if (mode === "demo") {
-      void connect();
-      return () => disconnect();
-    }
     disconnect();
   }, [connect, disconnect, mode]);
 
