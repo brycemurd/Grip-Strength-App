@@ -5,17 +5,19 @@ import {
   createWifiSource,
   ForceSource
 } from "../lib/dataSource";
-import { ForceSample } from "../utils/types";
+import { ForceSample, Units } from "../utils/types";
 
 export type ConnectionMode = "wifi" | "bluetooth";
 
 type UseForceStreamOptions = {
   mode: ConnectionMode;
+  incomingUnits?: Units;
   onConnectionIssue?: (reason: string) => void;
 };
 
 export const useForceStream = ({
   mode,
+  incomingUnits = "kg",
   onConnectionIssue
 }: UseForceStreamOptions) => {
   const [status, setStatus] = useState<ConnectionStatus>("disconnected");
@@ -33,8 +35,8 @@ export const useForceStream = ({
     if (mode === "wifi") {
       return createWifiSource();
     }
-    return createBluetoothSource();
-  }, [mode]);
+    return createBluetoothSource({ incomingUnits });
+  }, [incomingUnits, mode]);
 
   const disconnect = useCallback(() => {
     cleanupRef.current?.();

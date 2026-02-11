@@ -20,6 +20,10 @@ export type ForceSource = {
   stopSession?: () => Promise<void>;
 };
 
+type BluetoothSourceOptions = {
+  incomingUnits: Units;
+};
+
 const decodeForcePayload = (value: DataView) => {
   const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
   const decoded = new TextDecoder().decode(bytes).replace(/\0/g, "").trim();
@@ -146,7 +150,9 @@ export const createWifiSource = (): ForceSource => ({
   }
 });
 
-export const createBluetoothSource = (): ForceSource => ({
+export const createBluetoothSource = (
+  options: BluetoothSourceOptions
+): ForceSource => ({
   connect: async (handlers) => {
     if (!window.isSecureContext) {
       throw new Error(
@@ -189,7 +195,7 @@ export const createBluetoothSource = (): ForceSource => ({
       handlers.onStatus("connected");
       handlers.onSample({
         force: parsed,
-        units: "lbf",
+        units: options.incomingUnits,
         timestamp_ms: Date.now()
       });
     };
@@ -228,7 +234,7 @@ export const createBluetoothSource = (): ForceSource => ({
     if (firstParsed !== null) {
       handlers.onSample({
         force: firstParsed,
-        units: "lbf",
+        units: options.incomingUnits,
         timestamp_ms: Date.now()
       });
     }

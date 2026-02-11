@@ -39,6 +39,7 @@ export type ProfileConfig = {
   endurance: EnduranceConfig;
   pyramid: PyramidConfig;
   preferredUnits: Units;
+  bleInputUnits: Units;
   password?: string;
   friends: string[];
 };

@@ -45,6 +45,7 @@ The dashboard now uses Bluetooth mode as the main connection flow.
 - **Not supported in normal iPhone Safari or Chrome**.
 - **Web Bluetooth requires a secure context** (`https://` or `http://localhost`).
 - Click **Search for GripForge** or **Search & Connect Bluetooth** in the UI to open the device picker.
+- If your firmware sends values in `kg` (or `lbf`/`N`), set **BLE Source Units** in the dashboard settings so conversion is correct.
 
 **BLE Details**
 - Device name: `GripForge`
@@ -76,3 +77,4 @@ src/
 - Built for static hosting on ESP32 LittleFS.
 - Keep bundles light and dependencies minimal.
 - Profiles support optional passwords, friends, and a local leaderboard.
+- Live view shows both converted display force and raw BLE force for calibration checks.

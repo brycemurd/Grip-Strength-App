@@ -56,6 +56,7 @@ const unitsLabel: Record<Units, string> = {
 };
 
 const connectionCopy = "Connect via Bluetooth (Web Bluetooth)";
+const FORCE_DECIMALS = 2;
 
 const formatDuration = (ms: number) => {
   const totalSeconds = Math.max(0, Math.round(ms / 1000));
@@ -130,6 +131,8 @@ const convertForce = (value: number, from: Units, to: Units) => {
   }
   return asKg * 9.80665;
 };
+
+const formatForce = (value: number) => value.toFixed(FORCE_DECIMALS);
 
 const clamp = (value: number, min: number, max: number) =>
   Math.min(Math.max(value, min), max);
@@ -277,6 +280,7 @@ const App = () => {
   const { status, error, sample, batteryVoltage, connect, disconnect, startSession, stopSession } =
     useForceStream({
       mode: "bluetooth",
+      incomingUnits: activeProfile.profile.bleInputUnits,
       onConnectionIssue: (reason) => {
         setConnectionNote(reason);
       }
@@ -428,6 +432,7 @@ const App = () => {
     const updatedProfile = {
       ...activeProfile.profile,
       name: trimmed,
+      bleInputUnits: activeProfile.profile.bleInputUnits,
       password: newProfilePassword,
       friends: []
     };
@@ -461,6 +466,11 @@ const App = () => {
 
   const handleUnitChange = (units: Units) => {
     const updated = { ...activeProfile.profile, preferredUnits: units };
+    setProfiles((current) => updateProfile(current, updated));
+  };
+
+  const handleBleInputUnitsChange = (units: Units) => {
+    const updated = { ...activeProfile.profile, bleInputUnits: units };
     setProfiles((current) => updateProfile(current, updated));
   };
 
@@ -602,11 +612,14 @@ const App = () => {
                   </div>
                   <div>
                     <div className="text-4xl font-semibold text-slate-900 sm:text-5xl">
-                      {animatedForce.toFixed(1)}
+                      {formatForce(animatedForce)}
                       <span className="ml-2 text-lg font-medium text-slate-400">
                         {unitsLabel[preferredUnits]}
                       </span>
                     </div>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Raw BLE: {formatForce(sample.force)} {sample.units}
+                    </p>
                     <p className="mt-2 text-xs text-slate-400">
                       {status === "connected"
                         ? "Streaming live grip data"
@@ -650,6 +663,9 @@ const App = () => {
                   <div className="-mt-2 text-sm text-slate-500">
                     {gaugeMax} {unitsLabel[preferredUnits]} max
                   </div>
+                  <div className="mt-3 rounded-xl border border-cyan-100 bg-cyan-50/70 px-3 py-2 text-center text-xs text-cyan-700">
+                    Conversion source: <span className="font-semibold">{activeProfile.profile.bleInputUnits}</span>
+                  </div>
                 </div>
               </div>
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -673,7 +689,7 @@ const App = () => {
                       {stat.icon}
                     </div>
                     <div className="mt-2 text-2xl font-semibold text-slate-900">
-                      {stat.format ? stat.format(stat.value) : stat.value.toFixed(1)}
+                      {stat.format ? stat.format(stat.value) : formatForce(stat.value)}
                       {stat.suffix ? (
                         <span className="ml-1 text-sm font-medium text-slate-400">
                           {stat.suffix}
@@ -759,6 +775,22 @@ const App = () => {
                   >
                     {Object.keys(unitsLabel).map((unit) => (
                       <option key={unit} value={unit}>
+                        {unit}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-slate-500">BLE Source Units</span>
+                  <select
+                    value={activeProfile.profile.bleInputUnits}
+                    onChange={(event) =>
+                      handleBleInputUnitsChange(event.target.value as Units)
+                    }
+                    className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700"
+                  >
+                    {Object.keys(unitsLabel).map((unit) => (
+                      <option key={`ble-${unit}`} value={unit}>
                         {unit}
                       </option>
                     ))}
@@ -866,7 +898,7 @@ const App = () => {
                         </p>
                       </div>
                       <div className="text-right text-sm font-semibold text-slate-900">
-                        {session.maxForce.toFixed(1)} {unitsLabel[session.units]}
+                        {formatForce(session.maxForce)} {unitsLabel[session.units]}
                         <p className="text-xs text-slate-400">
                           {formatDuration(session.durationMs)}
                         </p>
@@ -957,7 +989,7 @@ const App = () => {
                     </p>
                   </div>
                   <p className="text-sm font-semibold text-slate-700">
-                    {entry.best.toFixed(1)} {unitsLabel[preferredUnits]}
+                    {formatForce(entry.best)} {unitsLabel[preferredUnits]}
                   </p>
                 </div>
               ))}
@@ -1005,7 +1037,7 @@ const App = () => {
                           </p>
                         </div>
                         <div className="text-right text-sm font-semibold text-slate-900">
-                          {session.maxForce.toFixed(1)} {unitsLabel[session.units]}
+                          {formatForce(session.maxForce)} {unitsLabel[session.units]}
                           <p className="text-xs text-slate-400">
                             {formatDuration(session.durationMs)}
                           </p>

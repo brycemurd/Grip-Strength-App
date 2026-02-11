@@ -8,6 +8,7 @@ const defaultProfile: ProfileConfig = {
   endurance: { targetForce: 35 },
   pyramid: { steps: [20, 30, 40, 30, 20] },
   preferredUnits: "kg",
+  bleInputUnits: "kg",
   password: "",
   friends: []
 };
@@ -29,6 +30,7 @@ export const loadProfiles = (): ProfileData[] => {
       ...entry,
       profile: {
         ...entry.profile,
+        bleInputUnits: entry.profile.bleInputUnits ?? "kg",
         password: entry.profile.password ?? "",
         friends: Array.isArray(entry.profile.friends)
           ? entry.profile.friends
