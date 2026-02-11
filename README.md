@@ -1,6 +1,6 @@
 # GripForge Dashboard
 
-A modern, responsive dashboard for the GripForge smart grip dynamometer. Built with Vite + React + TypeScript and Tailwind CSS, optimized for offline use on an ESP32 (LittleFS). Works in iPhone Safari and avoids Web Bluetooth entirely.
+A modern, colorful, responsive dashboard for the GripForge smart grip dynamometer. Built with Vite + React + TypeScript and Tailwind CSS for a Base44-style experience with gradients, rounded cards, and polished micro-interactions. Optimized for offline ESP32 hosting with an optional Web Bluetooth connection path.
 
 ## Quick Start
 
@@ -8,13 +8,13 @@ A modern, responsive dashboard for the GripForge smart grip dynamometer. Built w
 npm install
 ```
 
-### Run locally (laptop)
+### Run locally
 
 ```bash
 npm run dev
 ```
 
-The dev server runs at `http://localhost:5173` and proxies requests directly to `/api/*` on the same origin. In production, the ESP32 will serve the static files directly at `http://192.168.4.1`.
+The dev server runs at `http://localhost:5173` and connects to `/api/*` on the same origin.
 
 ### Build static assets
 
@@ -35,51 +35,44 @@ The build output lands in `dist/` and is ready to be copied to the ESP32 filesys
 4. Use the **Arduino ESP32 LittleFS Upload** tool to upload the `data/` folder to the ESP32.
 5. Ensure your ESP32 sketch serves LittleFS at `http://192.168.4.1`.
 
-## Device API Contract
+## Bluetooth Connection (Primary)
 
-The frontend supports two data transport options:
+The dashboard now uses Bluetooth mode as the main connection flow.
 
-### A) Polling (required)
-- `GET /api/force`
-  ```json
-  {
-    "force": 32.5,
-    "units": "kg",
-    "timestamp_ms": 1730000000000,
-    "battery_v": 4.05,
-    "is_connected": true
-  }
-  ```
-- `GET /api/session/latest` (optional)
-- `POST /api/session/start` (optional)
-- `POST /api/session/stop` (optional)
+### Bluetooth Mode
+- Uses the Web Bluetooth API.
+- Supported in **Desktop Chrome** and **Bluefy on iOS**.
+- **Not supported in normal iPhone Safari or Chrome**.
+- **Web Bluetooth requires a secure context** (`https://` or `http://localhost`).
+- Click **Search for GripForge** or **Search & Connect Bluetooth** in the UI to open the device picker.
 
-### B) WebSocket (optional)
-- `ws://<host>/ws`
-  ```json
-  { "force": 32.5, "units": "kg", "timestamp_ms": 1730000000000 }
-  ```
+**BLE Details**
+- Device name: `GripForge`
+- Service UUID: `0b1b403e-1e94-4048-8468-2c6140047310`
+- Characteristic UUID (Notify + Read): `6e31cb61-0acf-4001-acb3-abac9a94211d`
+- Payload: ASCII numeric string like `"12.3"` (lbf), sent via notify ~5Hz
 
-The app tries WebSocket first; if it fails, it falls back to polling every 150ms.
-
-## Demo Mode
-
-If the API is not available, Demo Mode auto-enables to generate realistic force data. You can also toggle Demo Mode manually in the UI.
+These UUIDs and the device name are defined in `src/lib/bleConstants.ts` and are already aligned with your ESP32 Arduino sketch values.
 
 ## Project Structure
 
 ```
 public/
-  gripforge-icon.svg
 src/
   App.tsx
   index.css
   main.tsx
+  hooks/
+    useForceStream.ts
+  lib/
+    bleConstants.ts
+    dataSource.ts
   utils/
     storage.ts
     types.ts
 ```
 
 ## Notes
-- Offline-first: no Web Bluetooth; Wi-Fi only.
-- Optimized for ESP32 LittleFS hosting (small dependencies, static build).
+- Built for static hosting on ESP32 LittleFS.
+- Keep bundles light and dependencies minimal.
+- Profiles support optional passwords, friends, and a local leaderboard.

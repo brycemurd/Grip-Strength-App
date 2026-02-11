@@ -7,14 +7,9 @@ const defaultProfile: ProfileConfig = {
   name: "bryce",
   endurance: { targetForce: 35 },
   pyramid: { steps: [20, 30, 40, 30, 20] },
-  preferredUnits: "kg"
-};
-
-export const demoProfile: ProfileConfig = {
-  name: "Demo User",
-  endurance: { targetForce: 30 },
-  pyramid: { steps: [15, 25, 35, 25, 15] },
-  preferredUnits: "kg"
+  preferredUnits: "kg",
+  password: "",
+  friends: []
 };
 
 export const loadProfiles = (): ProfileData[] => {
@@ -30,7 +25,16 @@ export const loadProfiles = (): ProfileData[] => {
     if (!Array.isArray(parsed) || parsed.length === 0) {
       return [{ profile: defaultProfile, sessions: [] }];
     }
-    return parsed;
+    return parsed.map((entry) => ({
+      ...entry,
+      profile: {
+        ...entry.profile,
+        password: entry.profile.password ?? "",
+        friends: Array.isArray(entry.profile.friends)
+          ? entry.profile.friends
+          : []
+      }
+    }));
   } catch {
     return [{ profile: defaultProfile, sessions: [] }];
   }
