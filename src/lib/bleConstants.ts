@@ -1,0 +1,7 @@
+export const GRIPFORGE_DEVICE_NAME = "GripForge";
+
+export const GRIPFORGE_SERVICE_UUID =
+  "0b1b403e-1e94-4048-8468-2c6140047310";
+
+export const GRIPFORGE_CHARACTERISTIC_UUID =
+  "6e31cb61-0acf-4001-acb3-abac9a94211d";

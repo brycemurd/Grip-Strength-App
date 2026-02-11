@@ -6,6 +6,12 @@ export type ForceSample = {
   timestamp_ms: number;
 };
 
+export type SessionSample = {
+  t_ms: number;
+  force: number;
+  units: Units;
+};
+
 export type TrainingMode = "max" | "endurance" | "pyramid" | "free";
 
 export type SessionSummary = {
@@ -33,6 +39,9 @@ export type ProfileConfig = {
   endurance: EnduranceConfig;
   pyramid: PyramidConfig;
   preferredUnits: Units;
+  bleInputUnits: Units;
+  password?: string;
+  friends: string[];
 };
 
 export type ProfileData = {
